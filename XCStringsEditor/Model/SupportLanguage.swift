@@ -6,7 +6,8 @@
 //
 
 import Foundation
+
 struct SupportLanguage {
-    public let language: String
-    public let name: String
+    let language: String
+    let name: String
 }

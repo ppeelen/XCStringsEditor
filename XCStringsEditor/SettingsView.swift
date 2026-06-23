@@ -8,7 +8,6 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @Environment(AppModel.self) private var appModel
     @AppStorage(UserDefaults.Keys.googleTranslateAPIKey) var googleTranslateAPIKey = ""
     @AppStorage(UserDefaults.Keys.deeplAPIKey) var deeplAPIKey = ""
     @AppStorage(UserDefaults.Keys.translationService) var translateService: TranslateService = .google
@@ -17,7 +16,7 @@ struct SettingsView: View {
     @AppStorage(UserDefaults.Keys.llmAPIKey) var llmAPIKey = ""
     @AppStorage(UserDefaults.Keys.llmURL) var llmURL = ""
     @AppStorage(UserDefaults.Keys.llmModel) var llmModel = ""
-    
+
     var body: some View {
         Form {
             Picker("Translate Service", selection: $translateService) {
@@ -42,9 +41,6 @@ struct SettingsView: View {
         }
         .padding()
         .frame(width: 500, height: 250)
-        .onChange(of: translateService) { oldValue, newValue in
-            appModel.translator = TranslatorFactory.translator
-        }
     }
 }
 

@@ -1,16 +1,16 @@
 //
-//  XCStrings.swift
-//  XCStringEditor
+//  AppModel.swift
+//  XCStringsEditor
 //
 //  Created by JungHoon Noh on 1/20/24.
-//
+//  Refactored for package: no file I/O or AppDelegate dependencies
 
 import Foundation
 import Combine
-import AppKit
 import OSLog
+import AppKit
 
-fileprivate let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "AppModel")
+fileprivate let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "XCStringsEditor", category: "AppModel")
 
 struct Filter {
     var new: Bool = false
@@ -39,30 +39,31 @@ struct Filter {
 }
 
 @Observable
-class AppModel {
+internal class AppModel {
+    // Core data: passed in by host app
+    var data: XCStrings
+    var configuration: EditorConfiguration
 
-    private(set) var fileURL: URL?
-    private(set) var title: String?
-
-    private(set) var xcstrings: XCStrings?
+    // UI state
     private(set) var languages: [Language] = []
 
     @ObservationIgnored
     private(set) var allLocalizeItems: [LocalizeItem] = []
     private(set) var localizeItems: [LocalizeItem] = []
-    var baseLanguage: Language = .english
-    var currentLanguage: Language = .english {
-        didSet {
+
+    var baseLanguage: Language {
+        data.sourceLanguage
+    }
+
+    var currentLanguage: Language {
+        get { configuration.currentLanguage }
+        set {
+            configuration.currentLanguage = newValue
             selected.removeAll()
-            
             reloadData()
-            
-            settings.lastLanguage = currentLanguage.code
-            if let settingsFileURL {
-                settings.save(to: settingsFileURL)
-            }
         }
     }
+
     var editingID: String?
     var sortOrder: [KeyPathComparator<LocalizeItem>] = [
         .init(\.state, order: SortOrder.forward),
@@ -70,189 +71,76 @@ class AppModel {
     ]
     var searchText: String = "" {
         didSet {
-            // TODO: debounce
             localizeItems = filteredItems()
         }
     }
-    var isModified: Bool = false
-    var forceClose: Bool = false
-    var canClose: Bool { forceClose || isModified == false }
 
-    var openingFileURL: URL?
-    
-//    private var debouncedSearchText: String = ""
-//    private var cancellables = Set<AnyCancellable>()
     var filter: Filter = Filter() {
         didSet {
             localizeItems = filteredItems()
         }
     }
-    var translateLaterItemsHidden: Bool = false {
-        didSet {
-            UserDefaults.standard.set(translateLaterItemsHidden, forKey: "TranslateLaterItemsHidden")
+
+    var translateLaterItemsHidden: Bool {
+        get { configuration.translateLaterItemsHidden }
+        set {
+            configuration.translateLaterItemsHidden = newValue
             localizeItems = filteredItems()
         }
     }
-    var staleItemsHidden: Bool = false {
-        didSet {
-            UserDefaults.standard.set(staleItemsHidden, forKey: "StaleItemsHidden")
+
+    var staleItemsHidden: Bool {
+        get { configuration.staleItemsHidden }
+        set {
+            configuration.staleItemsHidden = newValue
             localizeItems = filteredItems()
         }
     }
-    var dontTranslateItemsHidden: Bool = false {
-        didSet {
-            UserDefaults.standard.set(dontTranslateItemsHidden, forKey: "DontTranslateItemsHidden")
+
+    var dontTranslateItemsHidden: Bool {
+        get { configuration.dontTranslateItemsHidden }
+        set {
+            configuration.dontTranslateItemsHidden = newValue
             localizeItems = filteredItems()
         }
     }
 
     var selected = Set<LocalizeItem.ID>()
-    
-    var settings: FileSettings!
-    
+
     var showAPIKeyAlert: Bool = false
     var isLoading: Bool = false
-    var translator = TranslatorFactory.translator
-    init() {
-        translateLaterItemsHidden = UserDefaults.standard.bool(forKey: "TranslateLaterItemsHidden")
-        staleItemsHidden = UserDefaults.standard.bool(forKey: "StaleItemsHidden")
-        dontTranslateItemsHidden = UserDefaults.standard.bool(forKey: "DontTranslateItemsHidden")
-        
-//        searchText.publisher
-//            .debounce(for: 0.2, scheduler: RunLoop.main)
-//            .removeDuplicates()
-//            .assign(to: \.self.debouncedSearchText, on: self)
-//            .store(in: &cancellables)
-//        
-//        debouncedSearchText.publisher
-//            .debounce(for: .seconds(0.2), scheduler: DispatchQueue.main)
-////            .filter({ $0.count >= 2 })
-//            .removeDuplicates()
-//            .sink { [weak self] _ in
-//                self?.reloadData()
-////                self?.debouncedSearchText = String(value)
-//            }
-//            .store(in: &cancellables)
+
+    // Track items marked as "translateLater" and "needsWork" during editing session
+    var translateLaterItems: Set<LocalizeItem.ID> = []
+    var needsWorkItems: Set<LocalizeItem.ID> = []
+
+    // Translator for this editor session
+    var translator: any Translator {
+        TranslatorFactory.translator(for: configuration)
     }
-    
-    func load(file: URL) {
-        do {
-            let data = try Data(contentsOf: file)
-            let xcstrings = try JSONDecoder().decode(XCStrings.self, from: data)
-            
-            print(xcstrings.version, xcstrings.sourceLanguage)
-            print("string count", xcstrings.strings.count)
 
-            // xcstrings.printStrings()
+    /// Initialize editor with data and configuration
+    /// - Parameters:
+    ///   - data: XCStrings object to edit (will be mutated)
+    ///   - configuration: Editor configuration with API keys and preferences
+    init(data: XCStrings, configuration: EditorConfiguration) {
+        self.data = data
+        self.configuration = configuration
 
-            self.baseLanguage = xcstrings.sourceLanguage
-            self.xcstrings = xcstrings
-            self.languages = languages(in: xcstrings).sorted(using: KeyPathComparator<Language>(\.localizedName, order: .forward))
+        // Initialize from data
+        self.languages = languages(in: data).sorted(using: KeyPathComparator<Language>(\.localizedName, order: .forward))
+        self.allLocalizeItems = xcStringsToLocalizeItems(xcstrings: data, languages: self.languages)
 
-            self.fileURL = file
-            if let projectName = self.projectName(for: file) {
-                self.title = "\(projectName)/\(file.deletingPathExtension().lastPathComponent)"
-            } else {
-                self.title = file.deletingPathExtension().lastPathComponent
-            }
-            self.settings = loadSettings()
-
-            print("settings file", settingsFileURL!.standardizedFileURL)
-            print("settings translatelater", settings.translateLater.count)
-            
-            self.allLocalizeItems = xcStringsToLocalizeItems(xcstrings: xcstrings, languages: self.languages)
-
-            // Setting currentLanguage triggers reloadData
-            self.currentLanguage = if let lastLanguage = Language(code: settings.lastLanguage), self.languages.contains(lastLanguage) {
-                lastLanguage
-            } else {
-                self.languages.first!
-            }
-            isModified = false
-            
-            
-            // Update recent files
-            var recents = UserDefaults.standard.array(forKey: "RecentFiles") as? [String] ?? [String]()
-            if let index = recents.firstIndex(where: { $0 == file.path(percentEncoded: false) }) {
-                recents.remove(at: index)
-            }
-            recents.append(file.path(percentEncoded: false))
-            if recents.count > 15 {
-                recents.removeFirst(recents.count - 15)
-            }
-            UserDefaults.standard.set(recents, forKey: "RecentFiles")
-
-        } catch {
-            print("Failed to load", error)
+        // Set current language from configuration or use first available
+        if !self.languages.contains(self.configuration.currentLanguage) {
+            self.configuration.currentLanguage = self.languages.first ?? .english
         }
-    }
-    
-    func projectName(for url: URL) -> String? {
-        var result: String?
-        var projectURL = url.deletingLastPathComponent()
-        for _ in 0 ..< 5 {
-            if
-                let files = try? FileManager.default.contentsOfDirectory(atPath: projectURL.path(percentEncoded: false)),
-                let projectFileName = files.first(where: { $0.hasSuffix(".xcodeproj") })
-            {
-                result = projectFileName
-                break
-            }
-            
-            projectURL.deleteLastPathComponent()
-            if projectURL.pathComponents.count < 3 {
-                break
-            }
-        }
-        
-        return result == nil ? nil : String(result!.dropLast(".xcodeproj".count))
-    }
-    
-    func save() {
-        guard let fileURL else {
-            return
-        }
-        
-        isLoading = true
-        
-        Task {
-            updateAllLocalizedItems()
 
-            defer {
-                isLoading = false
-            }
-
-            guard let xcstrings = updateXCStrings() else {
-                return
-            }
-            
-            do {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-                
-                let data = try encoder.encode(xcstrings)
-                
-                //            let outputURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!.appendingPathComponent("modified.xcstrings", conformingTo: .fileURL)
-                let outputURL = fileURL
-                
-                try data.write(to: outputURL, options: [.atomic])
-         
-                Task { @MainActor in
-                    isModified = false
-                    
-                    clearModifiedMark()
-                }
-                
-            } catch {
-                logger.error("Save failed. \(error)")
-            }
-        }
+        reloadData()
     }
     
     private func updateXCStrings() -> XCStrings? {
-        guard var xcstrings = self.xcstrings else {
-            return nil
-        }
+        var xcstrings = self.data
         
         for item in allLocalizeItems {
             guard let index = xcstrings.strings.firstIndex(where: { $0.key == item.key }) else {
@@ -347,10 +235,8 @@ class AppModel {
     private func filteredItems() -> [LocalizeItem] {
         // TODO: filter sub items
 
-        if isModified {
-            updateAllLocalizedItems()
-        }
-        
+        updateAllLocalizedItems()
+
         return allLocalizeItems.filter {
             if $0.language != currentLanguage {
                 return false
@@ -519,8 +405,8 @@ class AppModel {
                     } else if let deviceVariation = localization.deviceVariation {
                         // device varations
                         var item = LocalizeItem(id: id, key: xcstring.key!, sourceString: "", comment: xcstring.comment, language: language, translation: nil, isStale: xcstring.extractionState == .stale, translateLater: false, needsReview: false, shouldTranslate: xcstring.shouldTranslate)
-                        item.translateLater = settings.translateLater.contains(id)
-                        item.needsWork = settings.needsWork.contains(id)
+                        item.translateLater = translateLaterItems.contains(id)
+                        item.needsWork = needsWorkItems.contains(id)
                         
                         var subItems = [LocalizeItem]()
                         for (key, deviceLocalization) in deviceVariation {
@@ -554,8 +440,8 @@ class AppModel {
                 } else {
                     // not translated
                     var item = LocalizeItem(id: id, key: xcstring.key!, sourceString: sourceString, comment: xcstring.comment, language: language, translation: nil, isStale: xcstring.extractionState == .stale, translateLater: false, needsReview: false, shouldTranslate: xcstring.shouldTranslate)
-                    item.translateLater = settings.translateLater.contains(id)
-                    item.needsWork = settings.needsWork.contains(id)
+                    item.translateLater = translateLaterItems.contains(id)
+                    item.needsWork = needsWorkItems.contains(id)
                     localizeItems.append(item)
                 }
             }
@@ -569,8 +455,8 @@ class AppModel {
         let key = deviceType != nil ? deviceType!.localizedName : xcstring.key!
         
         var item = LocalizeItem(id: id, key: key, sourceString: sourceString, comment: xcstring.comment, language: language, translation: stringUnit.value, isStale: xcstring.extractionState == .stale, translateLater: false, needsReview: needsReview, shouldTranslate: xcstring.shouldTranslate)
-        item.translateLater = parentItem?.translateLater ?? settings.translateLater.contains(id)
-        item.needsWork = parentItem?.needsWork ?? settings.needsWork.contains(id)
+        item.translateLater = parentItem?.translateLater ?? translateLaterItems.contains(id)
+        item.needsWork = parentItem?.needsWork ?? needsWorkItems.contains(id)
         item.deviceType = deviceType
         item.parentID = parentItem?.id
         return item
@@ -580,8 +466,8 @@ class AppModel {
         let key = deviceType != nil ? deviceType!.localizedName : xcstring.key!
         
         var item = LocalizeItem(id: id, key: key, sourceString: "", comment: xcstring.comment, language: language, translation: nil, isStale: xcstring.extractionState == .stale, translateLater: false, needsReview: false, shouldTranslate: xcstring.shouldTranslate)
-        item.translateLater = settings.translateLater.contains(id)
-        item.needsWork = settings.needsWork.contains(id)
+        item.translateLater = translateLaterItems.contains(id)
+        item.needsWork = needsWorkItems.contains(id)
         item.children = buildPluralVariationSubItems(variation, parentID: id, parent: item, sourceString: sourceString, xcstring: xcstring, sourceLanguage: sourceLanguage, language: language)
         item.deviceType = deviceType
         return item
@@ -787,9 +673,8 @@ class AppModel {
                 item.reverseTranslation = reverseTranslation
             }
             item.translateLater = false
-            settings.removeTranslateLaterItemID(item.id)
+            translateLaterItems.remove(item.id)
         }
-        isModified = true
     }
     
     func updateTranslation(for id: String, with translation: String, reverseTranslation: String? = nil) {
@@ -809,8 +694,7 @@ class AppModel {
             }
             item.isModified = true
             item.needsReview = false
-            isModified = true
-
+    
             if translation.isEmpty == false {
                 if let reverseTranslation {
                     item.reverseTranslation = reverseTranslation
@@ -847,9 +731,7 @@ class AppModel {
     ///
     /// - Throws: This function does not throw errors but handles them internally (e.g., logs or updates UI).
     func translate(ids: Set<LocalizeItem.ID>? = nil) async {
-        guard let sourceLanguage = self.xcstrings?.sourceLanguage else {
-            return
-        }
+        let sourceLanguage = self.data.sourceLanguage
 
         isLoading = true
         let itemIDs = ids ?? self.selected
@@ -897,7 +779,7 @@ class AppModel {
                     return
                 }
                 do {
-                    let reverseTranslation = try await translator.translate(.init(text: translation, source: item.language.code, target: xcstrings?.sourceLanguage.code ?? "en"))
+                    let reverseTranslation = try await translator.translate(.init(text: translation, source: item.language.code, target: self.data.sourceLanguage.code))
                     item.reverseTranslation = reverseTranslation
                 }
                 catch {
@@ -919,8 +801,7 @@ class AppModel {
             updateItem(with: itemID) { item in
                 if item.needsReview == false {
                     item.needsReview = true
-                    isModified = true
-                }
+                            }
             }
         }
     }
@@ -969,8 +850,7 @@ class AppModel {
             updateItem(with: itemID) { item in
                 if item.needsReview == true {
                     item.needsReview = false
-                    isModified = true
-                }
+                            }
             }
         }
     }
@@ -986,9 +866,7 @@ class AppModel {
                 markTranslateLater(for: item, value: value)
             }
         }
-        if let settingsFileURL {
-            settings.save(to: settingsFileURL)
-        }
+        // Settings auto-save handled by host app
     }
     
     private func markTranslateLater(for item: LocalizeItem, value: Bool = true) {
@@ -1016,9 +894,9 @@ class AppModel {
 
         // update settings (translateLater items)
         if value {
-            settings.appendTranslateLaterItemID(item.id)
+            translateLaterItems.insert(item.id)
         } else {
-            settings.removeTranslateLaterItemID(item.id)
+            translateLaterItems.remove(item.id)
         }
     }
     
@@ -1050,9 +928,9 @@ class AppModel {
             }
             
             if value {
-                settings.appendNeedsWorkItemID(itemID)
+                needsWorkItems.insert(itemID)
             } else {
-                settings.removeNeedsWorkItemID(itemID)
+                needsWorkItems.remove(itemID)
             }
         }
 
@@ -1088,17 +966,15 @@ class AppModel {
                 }
                 
                 if value {
-                    settings.appendNeedsWorkItemID(itemID)
+                    needsWorkItems.insert(itemID)
                 } else {
-                    settings.removeNeedsWorkItemID(itemID)
+                    needsWorkItems.remove(itemID)
                 }
             }
         }
                 
         
-        if let settingsFileURL {
-            settings.save(to: settingsFileURL)
-        }
+        // Settings auto-save handled by host app
     }
         
     func clearNeedsWork(allLanguages: Bool = false) {
@@ -1111,8 +987,8 @@ class AppModel {
                     if items[index].children != nil {
                         unmarkNeedsWork(items: &items[index].children!)
                     }
-                    if let index = settings.needsWork.firstIndex(of: items[index].id) {
-                        settings.needsWork.remove(at: index)
+                    if let index = needsWorkItems.firstIndex(of: items[index].id) {
+                        needsWorkItems.remove(at: index)
                     }
                 }
             }
@@ -1127,9 +1003,7 @@ class AppModel {
         }
 
         // save settings (updated needsWork items)
-        if let settingsFileURL {
-            settings.save(to: settingsFileURL)
-        }
+        // Settings auto-save handled by host app
     }
 
     func clearModifiedMark() {
@@ -1208,39 +1082,6 @@ class AppModel {
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
     }
 
-    // MARK: -
-    var settingsFileURL: URL? {
-        guard let fileURL else {
-            return nil
-        }
-        
-        var ids = UserDefaults.standard.dictionary(forKey: "FileIDs") ?? [String: Any]()
-        var fileID: String
-        
-        if let id = ids[fileURL.absoluteString] as? String {
-            fileID = id
-        } else {
-            fileID = UUID().uuidString
-            ids[fileURL.absoluteString] = fileID
-            UserDefaults.standard.set(ids, forKey: "FileIDs")
-        }
-        
-        let appSupportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).last!
-        let appSettingsDir = appSupportDir.appendingPathComponent("app.xiles.XCStringEditor", conformingTo: .directory)
-        let fileSettingsDir = appSettingsDir.appendingPathComponent("FileSettings", conformingTo: .directory)
-        if FileManager.default.fileExists(atPath: fileSettingsDir.path()) == false {
-            try! FileManager.default.createDirectory(at: fileSettingsDir, withIntermediateDirectories: true)
-        }
-        
-        return fileSettingsDir.appendingPathComponent("\(fileID).json", conformingTo: .json)
-    }
-    
-    func loadSettings() -> FileSettings? {
-        guard let settingsFileURL else {
-            return nil
-        }
-        return FileSettings.load(fileURL: settingsFileURL)
-    }
     func detectLanguage(text: String) async -> String? {
         do {
             let languages = try await translator.detect(text: text)
@@ -1249,27 +1090,5 @@ class AppModel {
             return nil
         }
     }
-    //MARK: NOTHING HAPPENED
-    func detectLanguage(){
-        //        Task {
-        //            for id in self.selected {
-        //                guard
-        //                    let item = self.item(with: id),
-        //                    let translation = item.translation, translation.isEmpty == false
-        //                else {
-        //                    continue
-        //                }
-        //
-        //                let languageCode = await self.detectLanguage(text: translation)
-        ////                print("detection", languageCode, id)
-        //                if languageCode == "zh-CN" {
-        //                    print("found zh-CN", id)
-        //                    item.needsWork = true
-        //                }
-        //            }
-        //            self.selected = []
-        //            print("Done Detection")
-        //        }
-    }
-    
+
 }
