@@ -6,10 +6,15 @@
 //
 
 import Foundation
-protocol Translator{
-    var translateAPI: TranslateAPI {get}
-    func translate(_ inputModel:InputModel) async throws -> String
-    func detect(text:String) async throws -> [Detection]
-    func languages(model:String,target:String) async throws ->[SupportLanguage]
-    
+
+/// Internal protocol for translation service implementations.
+///
+/// This protocol is used internally by the package to abstract different translation
+/// service providers. Custom translator implementations conform to this protocol.
+///
+protocol Translator {
+    var translateAPI: TranslateAPI { get }
+    func translate(_ inputModel: InputModel) async throws -> String
+    func detect(text: String) async throws -> [Detection]
+    func languages(model: String, target: String) async throws -> [SupportLanguage]
 }

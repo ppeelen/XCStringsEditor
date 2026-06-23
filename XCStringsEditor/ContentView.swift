@@ -24,7 +24,7 @@ struct ActivityIndicatorModifier: ViewModifier {
     }
 }
 
-struct ContentView: View {
+internal struct ContentView: View {
     enum Field: Hashable {
         case search
         case translation
@@ -32,7 +32,7 @@ struct ContentView: View {
     }
     
     @Environment(AppModel.self) private var appModel
-    @Environment(WindowDelegate.self) private var windowDelegate
+    @Environment(\.windowDelegate) private var windowDelegate
     
     @State private var translation: String = ""
     @State private var isEditing: Bool = false
@@ -47,211 +47,149 @@ struct ContentView: View {
 //        #endif
 //    }
         
+    @ViewBuilder
+    var tableView: some View {
+        @Bindable var appModel = appModel
+        Table(selection: $appModel.selected, sortOrder: $appModel.sortOrder) {
+            TableColumn("Key", value: \.key) { item in
+                keyColumnView(item: item)
+            }
+            TableColumn("Default Localization (\(appModel.baseLanguage.code))") { item in
+                sourceColumnView(item: item)
+            }
+            TableColumn(appModel.currentLanguage.localizedName) { item in
+                translationView(item: item, appModel: appModel)
+            }
+            TableColumn("Reverse Translation") { item in
+                reverseTranslationColumnView(item: item)
+            }
+            TableColumn("Comment") { item in
+                commentColumnView(comment: item.comment ?? "")
+            }
+            TableColumn("State", value: \.state) { item in
+                ItemStateView(state: item.state)
+            }
+            .width(80)
+            .alignment(.center)
+        } rows: {
+            OutlineGroup(appModel.localizeItems, children: \.children) { item in
+                TableRow(item)
+                    .contextMenu { rowContextMenu(for: item) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func translationView(item: LocalizeItem, appModel: AppModel) -> some View {
+        ZStack {
+            Text(verbatim: item.translation ?? item.sourceString)
+                .foregroundStyle(item.translation == nil ? .secondary.opacity(0.5) : (item.needsWork ? Color.orange : .primary))
+                .opacity(isEditing && item.id == appModel.editingID ? 0.0 : 1.0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(nil)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentShape(Rectangle())
+                .allowsHitTesting(item.children == nil)
+                .onTapGesture {
+                    onTapTranslation(item: item)
+                }
+
+            if isEditing && appModel.editingID == item.id {
+                TextField(item.sourceString, text: $translation, axis: .vertical)
+                    .lineLimit(nil)
+                    .focused($focusedField, equals: .translation)
+                    .onSubmit {
+                        focusedField = .table
+                    }
+                    .onAppear {
+                        logger.debug("textfield appear")
+                        self.translation = item.translation ?? ""
+                        DispatchQueue.main.async {
+                            focusedField = .translation
+                        }
+                    }
+            }
+        }
+    }
+
     var body: some View {
         @Bindable var appModel = appModel
 
         NavigationStack {
-            Table(selection: $appModel.selected, sortOrder: $appModel.sortOrder) {
-                // Key
-                TableColumn("Key", value: \.key) { item in
-                    keyColumnView(item: item)
+            tableView
+                .focused($focusedField, equals: .table)
+                .searchable(text: $appModel.searchText)
+                .navigationTitle("XCStringsEditor")
+                .onAppear(perform: setupUI)
+                .onChange(of: appModel.sortOrder) { _, newValue in
+                    appModel.sort(using: newValue)
                 }
-                
-
-                // Source
-                TableColumn("Default Localization (\(appModel.baseLanguage.code))") { item in
-                    sourceColumnView(item: item)
-                }
-
-                // Translation
-                TableColumn(appModel.currentLanguage.localizedName) { item in
-                    ZStack {
-                        Text(verbatim: item.translation ?? item.sourceString)
-                            .foregroundStyle(item.translation == nil ? .secondary.opacity(0.5) : (item.needsWork ? Color.orange : .primary))
-                            .opacity(isEditing && item.id == appModel.editingID ? 0.0 : 1.0)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .lineLimit(nil)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .contentShape(Rectangle())
-                            .allowsHitTesting(item.children == nil)
-                            .onTapGesture {
-                                onTapTranslation(item: item)
-                            }
-                        
-                        if isEditing && appModel.editingID == item.id {
-                            // Editing TextField
-                            TextField(item.sourceString, text: $translation, axis: .vertical)
-                                .lineLimit(nil)
-                                .focused($focusedField, equals: .translation)
-                                .onSubmit {
-                                    focusedField = .table
-                                }
-                                .onAppear {
-                                    logger.debug("textfield appear")
-                                    
-                                    self.translation = item.translation ?? ""
-                                    DispatchQueue.main.async {
-                                        focusedField = .translation
-                                    }
-                                }
-                        }
+                .onChange(of: focusedField) { _, _ in
+                    if focusedField != .translation {
+                        endEditing()
                     }
                 }
-                
-                // Reverse Translation
-                TableColumn("Reverse Translation") { item in
-                    reverseTranslationColumnView(item: item)
-                }
-                
-                // Comment
-                TableColumn("Comment") { item in
-                    commentColumnView(comment: item.comment ?? "")
-                }
-                // State
-                TableColumn("State", value: \.state) { item in
-                    ItemStateView(state: item.state)
-                }
-                .width(80)
-                .alignment(.center)
-                
-            } rows: {
-                OutlineGroup(appModel.localizeItems, children: \.children) { item in
-                    TableRow(item)
-                        .contextMenu { rowContextMenu(for: item) }
-                }
-            }
-            .focused($focusedField, equals: .table)
-            .searchable(text: $appModel.searchText)
-            .navigationTitle(appModel.title ?? "XCStringsEditor")
-            .onAppear {
-                startMonitorKeyboardEvent()
-                
-                windowDelegate.allowClose = {
-                    if appModel.canClose == false {
-                        showConfirmClose = true
-                        return false
-                    }
-                    return true
-                }
-            }
-            .toolbar {
-                ToolbarItemGroup(placement: .navigation) {
-                    if appModel.isModified {
-                        Circle()
-                            .fill(.blue)
-                            .frame(width: 6, height: 6)
-                    }
-                }
-                    
-                if appModel.languages.isEmpty == false {
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        Spacer()
-                        
-                        if appModel.localizeItems.count > 0 {
-                            let translatedCount = appModel.localizeItems.filter { $0.isTranslated }.count
-                            let progress: Float = Float(translatedCount) / Float(appModel.localizeItems.count)
-                            let tooltip: String = "\(translatedCount) / \(appModel.localizeItems.count)"
-                            HStack {
-                                ProgressView(value: progress, total: 1.0)
-                                    .frame(width: 90)
-                                    .tint(progressColor(progress))
-                                Text(verbatim: "\(progress.formatted(.percent.precision(.fractionLength(1))))")
-                                    .font(.caption)
-                            }
-                            .help(tooltip)
-                        }
-                        
-                        Picker("Language", selection: $appModel.currentLanguage) {
-                            ForEach(appModel.languages) { language in
-                                Text(language.localizedName)
-                            }
-                        }
-                        .frame(minWidth: 160)
-                        
-                        Spacer()
-                        
-                        Menu {
-                            Button {
-                                appModel.filter.reset()
-                            } label: {
-                                if appModel.filter.hasOn {
-                                    Text("All Items")
-                                } else {
-                                    Label("All Item(s)", systemImage: "checkmark")
-                                }
-                            }
-                            Divider()
-                            Group {
-                                Toggle("New", isOn: $appModel.filter.new)
-                                //                            Toggle("Translated", isOn: $stringsModel.filter.translated)
-                                Picker(selection: $appModel.filter.translated, label: Text("Translation")) {
-                                    Text("All").tag(0)
-                                    Text("Translated").tag(1)
-                                    Text("Untranslated").tag(2)
-                                }
-                                Picker(selection: $appModel.filter.translationQuality, label: Text("Reverse")) {
-                                    Text("All").tag(0)
-                                    Text("Missing").tag(1)
-                                    Text("Different").tag(2)
-                                    Text("Similiar").tag(3)
-                                    Text("Exact").tag(4)
-                                }
-                                
-                                Toggle("Modified", isOn: $appModel.filter.modified)
-                                Toggle("Needs Review", isOn: $appModel.filter.needsReview)
-                                Toggle("Needs Work", isOn: $appModel.filter.needsWork)
-                                Toggle("Translate Later", isOn: $appModel.filter.translateLater)
-                                Toggle("Source = Translation", isOn: $appModel.filter.sourceEqualTranslation)
-                            }
-                        } label: {
-                            Label("Filter", systemImage: appModel.filter.hasOn ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                        }
-                        .menuIndicator(.hidden)
-                    }
-                }
-                    
-            }
-            .toolbarRole(.editor)
-            .onChange(of: appModel.sortOrder, { oldValue, newValue in
-                appModel.sort(using: newValue)
-            })
-            .onChange(of: focusedField) { oldValue, newValue in
-                if oldValue == .translation && newValue != .translation {
-                    logger.debug("textfield focusout")
-
-                    let oldSelected = appModel.selected
-                    endEditing()
-                    
-                    if let nextEditingItem {
-                        self.nextEditingItem = nil
-                        DispatchQueue.main.async {
-                            editItem(nextEditingItem)
-                        }
-                    } else {
-                        appModel.selected = oldSelected
-                    }
-                }
-            }
-            .alert("Translate", isPresented: $appModel.showAPIKeyAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("API Key must be set in settings to use this function.")
-            }            
-            .alert("Confirm Close", isPresented: $showConfirmClose) {
-                Button("Cancel", role: .cancel) {}
-                Button("Discard Changes", role: .destructive) {
-                    appModel.forceClose = true
-                    NSApp.terminate(nil)
-                }
-            } message: {
-                Text("There are unsaved translations. Do you want to discard the changes?")
-            }
-            
-        } // NavigationStack
+                .toolbar { languageAndFilterToolbar(appModel: appModel) }
+                .toolbarRole(.editor)
+                .alert("Confirm Close", isPresented: $showConfirmClose, actions: closeAlertActions, message: closeAlertMessage)
+        }
         .modifier(ActivityIndicatorModifier(isPresented: $appModel.isLoading))
     }
-    
+
+    @ToolbarContentBuilder
+    private func languageAndFilterToolbar(appModel: AppModel) -> some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            languagePicker(appModel: appModel)
+            filterMenu(appModel: appModel)
+        }
+    }
+
+    @ViewBuilder
+    private func languagePicker(appModel: AppModel) -> some View {
+        Picker("Language", selection: .init(
+            get: { appModel.currentLanguage },
+            set: { appModel.currentLanguage = $0 }
+        )) {
+            ForEach(appModel.languages) { language in
+                Text(language.localizedName).tag(language)
+            }
+        }
+        .frame(minWidth: 160)
+    }
+
+    @ViewBuilder
+    private func filterMenu(@Bindable appModel: AppModel) -> some View {
+        Menu {
+            Button("Reset", action: { appModel.filter.reset() })
+            Divider()
+            Toggle("New", isOn: $appModel.filter.new)
+            Toggle("Needs Review", isOn: $appModel.filter.needsReview)
+            Toggle("Needs Work", isOn: $appModel.filter.needsWork)
+            Toggle("Translate Later", isOn: $appModel.filter.translateLater)
+        } label: {
+            Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+        }
+    }
+
+    @ViewBuilder
+    private func closeAlertActions() -> some View {
+        Button("Cancel", role: .cancel) {}
+        Button("Discard", role: .destructive) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    @ViewBuilder
+    private func closeAlertMessage() -> some View {
+        Text("Unsaved changes")
+    }
+
+
+    private func setupUI() {
+        startMonitorKeyboardEvent()
+    }
+
     private func endEditing(updateTranslation: Bool = true) {
 #if DEBUG
         logger.debug("endEditing")
@@ -411,8 +349,6 @@ struct ContentView: View {
 //            print(item)
 //        }
 //        #endif
-
-        appModel.save()
     }
     
     private func contextMenuItemIDs(itemID: LocalizeItem.ID) -> Set<LocalizeItem.ID> {

@@ -7,7 +7,7 @@
 
 import Foundation
 
-final class NetworkManager {
+final internal class NetworkManager {
     /// Builds the relevant URL components from the values specified
     /// in the API.
     private class func buildURL(endpoint: API) -> URLComponents {

@@ -8,10 +8,10 @@
 import SwiftUI
 
 struct WelcomeView: View {
-    
-    @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+
+    var onFileSelected: ((URL) -> Void)? = nil
     
     private var version: String {
         if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
@@ -51,15 +51,7 @@ struct WelcomeView: View {
                             Button {
                                 openWindow(id: "main")
                                 dismissWindow()
-                                
-                                appModel.load(file: url)
-                                
-                                var recents = UserDefaults.standard.array(forKey: "RecentFiles") as? [String] ?? [String]()
-                                if let index = recents.firstIndex(where: { $0 == url.path(percentEncoded: false) }) {
-                                    recents.remove(at: index)
-                                    recents.append(url.path(percentEncoded: false))
-                                    UserDefaults.standard.set(recents, forKey: "RecentFiles")
-                                }
+                                onFileSelected?(url)
                             } label: {
                                 HStack {
                                     Image(nsImage: NSWorkspace.shared.icon(forFile: url.path(percentEncoded: false)))

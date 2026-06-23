@@ -34,19 +34,26 @@ extension AppModel {
     }
 
 
-    
+
     private func translate(text: String, language: Language) async -> (String?, String?) {
-        guard let xcstrings else {
-            return (nil, nil)
-        }
-        
         do {
-            let sourceLanguage = xcstrings.sourceLanguage
-            
-            let translation = try await translator.translate(text: text, source: sourceLanguage.code, target: language.code)
-            let reverseTranslation = try await translator.translate(text: translation, source: language.code, target: sourceLanguage.code)
+            let sourceLanguage = self.data.sourceLanguage
+
+            let inputModel = InputModel(
+                text: text,
+                source: sourceLanguage.code,
+                target: language.code
+            )
+            let translation = try await translator.translate(inputModel)
+
+            let reverseInputModel = InputModel(
+                text: translation,
+                source: language.code,
+                target: sourceLanguage.code
+            )
+            let reverseTranslation = try await translator.translate(reverseInputModel)
             return (translation, reverseTranslation)
-            
+
         } catch {
             return (nil, nil)
         }

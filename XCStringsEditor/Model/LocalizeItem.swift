@@ -8,33 +8,67 @@
 import Foundation
 import SwiftUI
 
-struct LocalizeItem: Identifiable, Hashable, CustomStringConvertible {
-    /// Enum representing the various states of a LocalizeItem.
-    enum State: Int, Comparable {
-        static func < (lhs: LocalizeItem.State, rhs: LocalizeItem.State) -> Bool {
+/// Represents a single localizable string item in the `.xcstrings` file.
+///
+/// A `LocalizeItem` wraps a single string entry that needs translation or review.
+/// It tracks the source text, translations in different languages, and state
+/// (new, translated, stale, needs review, etc.).
+///
+/// Each item can optionally have plural and device variations, represented as
+/// parent-child relationships.
+///
+/// ## States
+///
+/// Items follow a state machine:
+/// - `new`: Newly added, never translated
+/// - `translated`: Has a valid translation
+/// - `stale`: Source changed but translation wasn't updated
+/// - `needsReview`: Translated but marked for manual review
+/// - `needsWork`: Translation exists but is incomplete or incorrect
+/// - `translateLater`: Deferred to future translation pass
+/// - `dontTranslate`: Explicitly marked to not translate (e.g., brand names)
+///
+public struct LocalizeItem: Identifiable, Hashable, CustomStringConvertible {
+    /// The lifecycle state of a localization item.
+    ///
+    /// Items move through states as they're created, translated, reviewed, and maintained.
+    /// Some states are system-determined (new, stale, translated) while others are
+    /// manually set by the translator (needsReview, needsWork, translateLater, dontTranslate).
+    public enum State: Int, Comparable {
+        public static func < (lhs: LocalizeItem.State, rhs: LocalizeItem.State) -> Bool {
             return lhs.rawValue < rhs.rawValue
         }
-        
+
         /// Item is newly created and not yet translated.
         case new
         /// Item has been translated.
         case translated
-        /// Item is not used in code.
+        /// Item is not used in code (source text was removed).
         case stale
-        /// Item needs to be reviewed for accuracy. Manually marked by the user.
+        /// Item needs to be reviewed for accuracy.
+        ///
+        /// Manually marked by translator. Indicates the translation should be checked
+        /// before release.
         case needsReview
-        /// Item is marked as "Do not translate". Manually marked by the user.
+        /// Item is marked as "Do not translate".
+        ///
+        /// Manually marked. Examples: brand names, technical terms that shouldn't be translated.
         case dontTranslate
-        /// Item requires additional work or corrections. Manually marked by the user. Managed in XCStringsEditor not Xcode.
+        /// Item requires additional work or corrections.
+        ///
+        /// Manually marked. Indicates the current translation is incomplete or needs revision.
+        /// Unlike `stale`, this is manually set, not automatically detected.
         case needsWork
-        /// Item is marked to be translated later. Manually marked by the user. Managed in XCStringsEditor not Xcode.
+        /// Item is deferred to translate later.
+        ///
+        /// Manually marked. Translator indicates they'll return to this item in a future pass.
         case translateLater
     }
 
     /// Separator used in item IDs for dividing different components.
-    static let ID_DIVIDER = "|XCSTRINGEDITORDIVIDER|"
-    
-    var id: String
+    public static let ID_DIVIDER = "|XCSTRINGEDITORDIVIDER|"
+
+    public var id: String
     var parentID: String?
     var key: String
     var sourceString: String
@@ -97,7 +131,7 @@ struct LocalizeItem: Identifiable, Hashable, CustomStringConvertible {
     var children: [LocalizeItem]?
     
     /// Description for debugging and logging purposes.
-    var description: String {
+    public var description: String {
         var result = "\(key), \(language.code), \(translation ?? "nil"), NeedsReview: \(needsReview), Modified: \(isModified)"
         
         if let children {
@@ -134,7 +168,7 @@ struct LocalizeItem: Identifiable, Hashable, CustomStringConvertible {
         return nil
     }
     
-    internal init(id: String, key: String, sourceString: String, comment: String? = nil, language: Language, translation: String? = nil, reverseTranslation: String? = nil, pluralType: XCString.PluralType? = nil, deviceType: XCString.DeviceType? = nil, isStale: Bool = false, translateLater: Bool = false, needsWork: Bool = false, needsReview: Bool, shouldTranslate: Bool = true, isModified: Bool = false, children: [LocalizeItem]? = nil) {
+    public init(id: String, key: String, sourceString: String, comment: String? = nil, language: Language, translation: String? = nil, reverseTranslation: String? = nil, pluralType: XCString.PluralType? = nil, deviceType: XCString.DeviceType? = nil, isStale: Bool = false, translateLater: Bool = false, needsWork: Bool = false, needsReview: Bool, shouldTranslate: Bool = true, isModified: Bool = false, children: [LocalizeItem]? = nil) {
         self.id = id
         self.key = key
         self.sourceString = sourceString
@@ -153,7 +187,7 @@ struct LocalizeItem: Identifiable, Hashable, CustomStringConvertible {
         self.children = children
     }
     
-    func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
 

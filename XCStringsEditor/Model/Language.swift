@@ -7,12 +7,32 @@
 
 import Foundation
 
-enum Language: String, Hashable, Identifiable, CustomStringConvertible {
+/// Supported languages for localization.
+///
+/// `Language` is an enum of ISO 639-1 language codes and region variants supported
+/// by XCStringsEditor and major translation services.
+///
+/// ## Usage
+///
+/// ```swift
+/// let lang = Language.french
+/// let langFromCode = Language(code: "fr") // Same as above
+///
+/// print(lang.code) // "fr"
+/// print(lang.localizedName) // "Français"
+/// ```
+///
+/// ## Supported Languages
+///
+/// The editor supports 35+ languages including major world languages and regional variants.
+/// Each case maps to an ISO 639-1 or ISO 3166-1 code for compatibility with `.xcstrings` format.
+///
+public enum Language: String, Hashable, Identifiable, CustomStringConvertible {
     case arabic = "ar"
     case catalan = "ca"
     case chineseHongKong = "zh-HK"
-    case chinese = "zh-Hans" // zh-CN
-    case chineseTraditional = "zh-Hant" // zh-TW
+    case chinese = "zh-Hans"
+    case chineseTraditional = "zh-Hant"
     case croatian = "hr"
     case czech = "cs"
     case danish = "da"
@@ -33,7 +53,7 @@ enum Language: String, Hashable, Identifiable, CustomStringConvertible {
     case indonesian = "id"
     case italian = "it"
     case japanese = "ja"
-    case korean = "ko" // ko
+    case korean = "ko"
     case malay = "ms"
     case norwegianBokmal = "nb"
     case polish = "pl"
@@ -49,18 +69,22 @@ enum Language: String, Hashable, Identifiable, CustomStringConvertible {
     case turkish = "tr"
     case ukrainian = "uk"
     case vietnamese = "vi"
-    
-    var id: Self { self }
 
-    init?(code: String) {
+    public var id: Self { self }
+
+    /// Creates a Language from an ISO 639-1 code.
+    ///
+    /// - Parameter code: Language code (e.g., "en", "fr", "zh-Hans")
+    /// - Returns: Language case if code is valid, nil otherwise
+    public init?(code: String) {
         self.init(rawValue: code)
     }
 
-    var code: String {
+    public var code: String {
         return self.rawValue
     }
-    
-    var localizedName: String {
+
+    public var localizedName: String {
         switch self {
         case .english: return String(localized: "English")
         case .korean: return String(localized: "Korean")
@@ -137,7 +161,7 @@ enum Language: String, Hashable, Identifiable, CustomStringConvertible {
         }
     }
     
-    var description: String {
+    public var description: String {
         return code
     }
 
